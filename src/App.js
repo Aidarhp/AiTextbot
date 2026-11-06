@@ -1,4 +1,5 @@
 import { useState } from "react";
+//Как же заебал
 
 const apiUrl = process.env.REACT_APP_API_URL || "http://localhost:3001";
 

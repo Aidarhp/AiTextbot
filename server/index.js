@@ -4,7 +4,7 @@ const { createServer } = require("node:http");
 const https = require("node:https");
 
 const port = Number(process.env.API_PORT) || 3001;
-const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+const model = process.env.GOOGLE_MODEL || "gemini-3.8-flash";
 const maxPromptLength = 4000;
 
 function sendJson(response, status, body) {
@@ -24,19 +24,18 @@ function isLocalOrigin(origin) {
   }
 }
 
-function generateWithOpenAI(prompt) {
+function generateWithGoogleAI(prompt) {
   const body = JSON.stringify({
-    model,
-    messages: [{ role: "user", content: prompt }],
+    contents: [{ parts: [{ text: prompt }] }],
   });
 
   return new Promise((resolve, reject) => {
     const request = https.request(
-      "https://api.openai.com/v1/chat/completions",
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
       {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+          "x-goog-api-key": process.env.GOOGLE_API_KEY,
           "Content-Type": "application/json",
           "Content-Length": Buffer.byteLength(body),
         },
@@ -54,14 +53,14 @@ function generateWithOpenAI(prompt) {
               data: JSON.parse(responseBody),
             });
           } catch {
-            reject(new Error("OpenAI returned an invalid response."));
+            reject(new Error("Google AI returned an invalid response."));
           }
         });
       },
     );
 
     request.setTimeout(60_000, () => {
-      request.destroy(new Error("OpenAI request timed out."));
+      request.destroy(new Error("Google AI request timed out."));
     });
     request.on("error", reject);
     request.end(body);
@@ -71,7 +70,9 @@ function generateWithOpenAI(prompt) {
 const server = createServer(async (request, response) => {
   const origin = request.headers.origin;
   if (origin && !isLocalOrigin(origin)) {
-    sendJson(response, 403, { error: "Requests from this origin are not allowed." });
+    sendJson(response, 403, {
+      error: "Requests from this origin are not allowed.",
+    });
     return;
   }
   if (origin) {
@@ -92,9 +93,10 @@ const server = createServer(async (request, response) => {
     return;
   }
 
-  if (!process.env.OPENAI_API_KEY) {
+  if (!process.env.GOOGLE_API_KEY) {
     sendJson(response, 503, {
-      error: "OpenAI is not configured. Add OPENAI_API_KEY to .env and restart the app.",
+      error:
+        "Google AI is not configured. Add GOOGLE_API_KEY to .env and restart the app.",
     });
     return;
   }
@@ -125,29 +127,43 @@ const server = createServer(async (request, response) => {
   }
 
   try {
-    const upstreamResponse = await generateWithOpenAI(prompt);
+    const upstreamResponse = await generateWithGoogleAI(prompt);
     const result = upstreamResponse.data;
 
-    if (upstreamResponse.status < 200 || upstreamResponse.status >= 300) {
-      sendJson(response, upstreamResponse.status, {
-        error: result.error?.message || "OpenAI could not generate a response.",
+    if (upstreamResponse.status === 429) {
+      sendJson(response, 429, {
+        error:
+          "Google AI Studio is limiting requests for this model. Check your Gemini API quota and billing, or try again after the limit resets.",
       });
       return;
     }
 
-    const text = result.choices?.[0]?.message?.content;
-    if (typeof text !== "string") {
-      sendJson(response, 502, { error: "OpenAI returned an empty or invalid response." });
+    if (upstreamResponse.status < 200 || upstreamResponse.status >= 300) {
+      sendJson(response, upstreamResponse.status, {
+        error: result.error?.message || "Google AI could not generate a response.",
+      });
+      return;
+    }
+
+    const text = result.candidates?.[0]?.content?.parts
+      ?.map((part) => part.text)
+      .filter((part) => typeof part === "string")
+      .join("");
+    if (typeof text !== "string" || !text.trim()) {
+      sendJson(response, 502, {
+        error: "Google AI returned an empty or invalid response.",
+      });
       return;
     }
 
     sendJson(response, 200, { text });
   } catch (error) {
-    const timedOut = error.message === "OpenAI request timed out.";
+    const timedOut = error.message === "Google AI request timed out.";
     sendJson(response, timedOut ? 504 : 502, {
       error: timedOut
-        ? "The request to OpenAI timed out. Please try again."
-        : error.message || "Could not reach OpenAI. Check your connection and try again.",
+        ? "The request to Google AI timed out. Please try again."
+        : error.message ||
+          "Could not reach Google AI. Check your connection and try again.",
     });
   }
 });

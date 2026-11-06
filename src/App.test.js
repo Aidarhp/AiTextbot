@@ -32,7 +32,7 @@ test("generates text from the submitted prompt", async () => {
 test("shows an error when text generation fails", async () => {
   global.fetch.mockResolvedValue({
     ok: false,
-    json: async () => ({ error: "Server is missing OPENAI_API_KEY." }),
+    json: async () => ({ error: "Server is missing GOOGLE_API_KEY." }),
   });
   render(<App />);
 
@@ -42,6 +42,6 @@ test("shows an error when text generation fails", async () => {
   fireEvent.click(screen.getByRole("button", { name: /submit/i }));
 
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Server is missing OPENAI_API_KEY.",
+    "Server is missing GOOGLE_API_KEY.",
   );
 });
